@@ -269,7 +269,8 @@
             "bookworm"
         ],
         "supported_edition": [
-            "kde"
+            "kde",
+            "cli"
         ]
     },
     {

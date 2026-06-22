@@ -1,4 +1,13 @@
 local base_packages = import "categories/base.libjsonnet";
+local product_soc_array = import "../../../configs/product_soc_array.libjsonnet";
+
+// EvilGeniusLabs cli edition (eglrdsk fork).
+//
+// Stock rsdk `cli` == base_packages: the lean headless userland layered over `core`.
+// We keep that base set and add board-scoped tuning for rk3566 (Radxa Zero 3 / 3W / 3E)
+// here, guarded by SoC so the delta never leaks into other products or the `kde` edition
+// (which also pulls `base`). Rationale + the kde-vs-cli map live in radxa-zero3-cli's
+// Documentation/rsdk-build-notes.md.
 
 function(suite,
          product,
@@ -12,4 +21,50 @@ function(suite,
                 vendor_packages,
                 linux_override,
                 firmware_override,
+) + (
+    // --- rk3566 headless tuning ---
+    if std.contains(product_soc_array(product), "rk3566")
+    then {
+        mmdebstrap+: {
+            // Package tuning: the stock `base` set is already lean and SoC-appropriate,
+            // so v1 ships it as-is to establish a booting baseline. Trim candidates
+            // (e.g. `samba`) are tracked in rsdk-build-notes.md and applied only after a
+            // verified boot — never trim blind.
+
+            "customize-hooks"+: [
+                // --- Boot fix: U-Boot serial-menu hang ---
+                // Radxa's discontinued CLI image hung at boot (last line "Starting
+                // kernel..."): U-Boot forced an interactive extlinux menu selection over
+                // the UART2 serial console, so a headless board waited at the prompt
+                // forever. Desktop booted to HDMI and never hit it. Fix = make the menu
+                // non-interactive (PROMPT/TIMEOUT 0) in the source conf, so the
+                // `u-boot-update` that rootfs.jsonnet runs right after this hook — and any
+                // future `apt upgrade` that re-runs it — regenerates a non-blocking
+                // extlinux.conf. Ref: AqualinkD-Radxa-zero3; rsdk-build-notes.md.
+                //
+                // $1 = mounted rootfs. The `cat`s are deliberate: first real build must
+                // confirm the actual variable names in radxa.conf (VERIFY-ON-FIRST-BUILD)
+                // — drop the logging once locked.
+                |||
+                    set -e
+                    conf="$1/usr/share/u-boot-menu/conf.d/radxa.conf"
+                    echo "[eglrdsk] rk3566 cli boot fix: disabling interactive U-Boot menu"
+                    if [ -f "$conf" ]; then
+                        echo "[eglrdsk] radxa.conf BEFORE:"; cat "$conf"
+                        for var in U_BOOT_PROMPT U_BOOT_TIMEOUT; do
+                            if grep -qE "^[[:space:]]*#?[[:space:]]*${var}=" "$conf"; then
+                                sed -i -E "s|^[[:space:]]*#?[[:space:]]*${var}=.*|${var}=\"0\"|" "$conf"
+                            else
+                                echo "${var}=\"0\"" >> "$conf"
+                            fi
+                        done
+                        echo "[eglrdsk] radxa.conf AFTER:"; cat "$conf"
+                    else
+                        echo "[eglrdsk] WARNING: $conf not found — boot fix not applied; check the BSP boot package."
+                    fi
+                |||,
+            ],
+        },
+    }
+    else {}
 )
