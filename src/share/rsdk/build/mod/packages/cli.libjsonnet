@@ -31,6 +31,26 @@ function(suite,
             // (e.g. `samba`) are tracked in rsdk-build-notes.md and applied only after a
             // verified boot — never trim blind.
 
+            // --- HARD REQUIREMENT: Wi-Fi + Bluetooth (Zero 3W, AIC8800D80) ---
+            // Wi-Fi is SDIO; Bluetooth is UART on ttyS1 (NOT USB). The driver is the
+            // out-of-tree DKMS pair aic8800_bsp + aic8800_fdrv, and BT only comes up
+            // because rsetup ships systemd units that GPIO-reset the radio and run
+            // `hciattach` on ttyS1. These all normally arrive via task-radxa-zero3 +
+            // --install-recommends (rk3566/bookworm has recommends on), the same path
+            // the stock kde image uses — but we pin them explicitly so the kde->cli
+            // delta can never silently drop wireless. Names captured from the working
+            // stock image; full analysis in radxa-zero3-cli's
+            // Documentation/bluetooth-provisioning.md.
+            // (Headers for the DKMS build are installed by core's essential-hook, which
+            //  runs before this main package install. Userland Wi-Fi mgmt — network-manager,
+            //  wpasupplicant, iw, wireless-regdb, rfkill — comes from core/base.)
+            packages+: [
+                "aic8800-firmware",            // Wi-Fi + BT firmware blobs (aic8800_fw/SDIO/aic8800D80)
+                "aic8800-sdio-dkms",           // out-of-tree driver: aic8800_bsp + aic8800_fdrv
+                "rsetup-config-aic8800-ttys1", // BT bring-up: aic8800 reset + hciattach @ttyS1 units
+                "bluez",                       // BT userspace (bluetoothd/bluetoothctl); explicit for safety
+            ],
+
             "customize-hooks"+: [
                 // --- Boot fix: U-Boot serial-menu hang ---
                 // Radxa's discontinued CLI image hung at boot (last line "Starting
