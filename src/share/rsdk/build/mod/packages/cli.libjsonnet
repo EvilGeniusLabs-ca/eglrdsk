@@ -65,6 +65,18 @@ function(suite,
                 // $1 = mounted rootfs. The `cat`s are deliberate: first real build must
                 // confirm the actual variable names in radxa.conf (VERIFY-ON-FIRST-BUILD)
                 // — drop the logging once locked.
+                // --- Enable sshd so the headless image accepts incoming connections ---
+                // openssh-server ships via core, but the service is not guaranteed
+                // enabled in the built rootfs. Enable it offline against the mounted
+                // rootfs so it starts at boot. Per-device host keys are still generated
+                // on first boot (no fixed key baked in).
+                //
+                // $1 = mounted rootfs.
+                |||
+                    set -e
+                    echo "[eglrdsk] enabling ssh.service in rootfs"
+                    systemctl --root="$1" enable ssh.service
+                |||,
                 |||
                     set -e
                     conf="$1/usr/share/u-boot-menu/conf.d/radxa.conf"
