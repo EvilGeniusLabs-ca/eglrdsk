@@ -67,15 +67,26 @@ function(suite,
                 // — drop the logging once locked.
                 // --- Enable sshd so the headless image accepts incoming connections ---
                 // openssh-server ships via core, but the service is not guaranteed
-                // enabled in the built rootfs. Enable it offline against the mounted
-                // rootfs so it starts at boot. Per-device host keys are still generated
-                // on first boot (no fixed key baked in).
+                // enabled in the built rootfs. Enable it by writing the same symlink
+                // `systemctl enable` would create — pure coreutils, no dependency on a
+                // working systemctl in the build environment. ssh.service declares
+                // WantedBy=multi-user.target, so the wants-dir symlink is the whole job.
+                // Per-device host keys are still generated on first boot (no fixed key
+                // baked in).
                 //
                 // $1 = mounted rootfs.
                 |||
                     set -e
+                    unit="$1/lib/systemd/system/ssh.service"
+                    wants="$1/etc/systemd/system/multi-user.target.wants"
                     echo "[eglrdsk] enabling ssh.service in rootfs"
-                    systemctl --root="$1" enable ssh.service
+                    if [ -f "$unit" ]; then
+                        mkdir -p "$wants"
+                        ln -sf /lib/systemd/system/ssh.service "$wants/ssh.service"
+                        echo "[eglrdsk] ssh.service enable symlink written"
+                    else
+                        echo "[eglrdsk] WARNING: $unit not found — sshd not enabled; check openssh-server install."
+                    fi
                 |||,
                 |||
                     set -e
