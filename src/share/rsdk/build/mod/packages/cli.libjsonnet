@@ -49,30 +49,21 @@ function(suite,
                 "aic8800-sdio-dkms",           // out-of-tree driver: aic8800_bsp + aic8800_fdrv
                 "rsetup-config-aic8800-ttys1", // BT bring-up: aic8800 reset + hciattach @ttyS1 units
                 "bluez",                       // BT userspace (bluetoothd/bluetoothctl); explicit for safety
+
+                // --- Timezone database ---
+                // The stock base set installs only UTC zone data, so users can't switch
+                // zones. Ship tzdata so `timedatectl set-timezone <Zone>` works. Default
+                // stays UTC — neutral, correct for a public image; we don't bake a region in.
+                "tzdata",
             ],
 
             "customize-hooks"+: [
-                // --- Boot fix: U-Boot serial-menu hang ---
-                // Radxa's discontinued CLI image hung at boot (last line "Starting
-                // kernel..."): U-Boot forced an interactive extlinux menu selection over
-                // the UART2 serial console, so a headless board waited at the prompt
-                // forever. Desktop booted to HDMI and never hit it. Fix = make the menu
-                // non-interactive (PROMPT/TIMEOUT 0) in the source conf, so the
-                // `u-boot-update` that rootfs.jsonnet runs right after this hook — and any
-                // future `apt upgrade` that re-runs it — regenerates a non-blocking
-                // extlinux.conf. Ref: AqualinkD-Radxa-zero3; rsdk-build-notes.md.
-                //
-                // $1 = mounted rootfs. The `cat`s are deliberate: first real build must
-                // confirm the actual variable names in radxa.conf (VERIFY-ON-FIRST-BUILD)
-                // — drop the logging once locked.
                 // --- Enable sshd so the headless image accepts incoming connections ---
                 // openssh-server ships via core, but the service is not guaranteed
                 // enabled in the built rootfs. Enable it by writing the same symlink
                 // `systemctl enable` would create — pure coreutils, no dependency on a
                 // working systemctl in the build environment. ssh.service declares
                 // WantedBy=multi-user.target, so the wants-dir symlink is the whole job.
-                // Per-device host keys are still generated on first boot (no fixed key
-                // baked in).
                 //
                 // $1 = mounted rootfs.
                 |||
@@ -88,6 +79,52 @@ function(suite,
                         echo "[eglrdsk] WARNING: $unit not found — sshd not enabled; check openssh-server install."
                     fi
                 |||,
+                // --- Per-device SSH host keys (first-boot regeneration) ---
+                // The build bakes host keys into the rootfs, so every flashed card would
+                // otherwise share one SSH identity — a security hole and "host key
+                // changed" warnings for anyone flashing more than one board. Fix: delete
+                // the baked keys here, and install a guarded oneshot that runs
+                // `ssh-keygen -A` on the first boot only (ConditionPathExists), ordered
+                // Before=ssh.service so keys exist before sshd starts. Self-contained —
+                // no rsetup/dpkg-reconfigure dependency. printf (not a heredoc) keeps the
+                // unit body clear of jsonnet `|||` indentation pitfalls.
+                //
+                // $1 = mounted rootfs.
+                |||
+                    set -e
+                    echo "[eglrdsk] removing baked SSH host keys; regenerate on first boot"
+                    rm -f "$1"/etc/ssh/ssh_host_*
+                    unit="$1/etc/systemd/system/regenerate-ssh-host-keys.service"
+                    printf '%s\n' \
+                        '[Unit]' \
+                        'Description=Regenerate SSH host keys on first boot' \
+                        'ConditionPathExists=!/etc/ssh/ssh_host_rsa_key' \
+                        'Before=ssh.service' \
+                        '[Service]' \
+                        'Type=oneshot' \
+                        'ExecStart=/usr/bin/ssh-keygen -A' \
+                        '[Install]' \
+                        'WantedBy=multi-user.target' \
+                        > "$unit"
+                    wants="$1/etc/systemd/system/multi-user.target.wants"
+                    mkdir -p "$wants"
+                    ln -sf /etc/systemd/system/regenerate-ssh-host-keys.service \
+                        "$wants/regenerate-ssh-host-keys.service"
+                    echo "[eglrdsk] regenerate-ssh-host-keys.service installed + enabled"
+                |||,
+                // --- Boot fix: U-Boot serial-menu hang ---
+                // Radxa's discontinued CLI image hung at boot (last line "Starting
+                // kernel..."): U-Boot forced an interactive extlinux menu selection over
+                // the UART2 serial console, so a headless board waited at the prompt
+                // forever. Desktop booted to HDMI and never hit it. Fix = make the menu
+                // non-interactive (PROMPT/TIMEOUT 0) in the source conf, so the
+                // `u-boot-update` that rootfs.jsonnet runs right after this hook — and any
+                // future `apt upgrade` that re-runs it — regenerates a non-blocking
+                // extlinux.conf. Ref: AqualinkD-Radxa-zero3; rsdk-build-notes.md.
+                //
+                // $1 = mounted rootfs. The `cat`s are deliberate: first real build must
+                // confirm the actual variable names in radxa.conf (VERIFY-ON-FIRST-BUILD)
+                // — drop the logging once locked.
                 |||
                     set -e
                     conf="$1/usr/share/u-boot-menu/conf.d/radxa.conf"
