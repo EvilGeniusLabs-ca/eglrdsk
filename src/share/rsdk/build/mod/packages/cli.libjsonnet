@@ -58,60 +58,15 @@ function(suite,
             ],
 
             "customize-hooks"+: [
-                // --- Enable sshd so the headless image accepts incoming connections ---
-                // openssh-server ships via core, but the service is not guaranteed
-                // enabled in the built rootfs. Enable it by writing the same symlink
-                // `systemctl enable` would create — pure coreutils, no dependency on a
-                // working systemctl in the build environment. ssh.service declares
-                // WantedBy=multi-user.target, so the wants-dir symlink is the whole job.
-                //
-                // $1 = mounted rootfs.
-                |||
-                    set -e
-                    unit="$1/lib/systemd/system/ssh.service"
-                    wants="$1/etc/systemd/system/multi-user.target.wants"
-                    echo "[eglrdsk] enabling ssh.service in rootfs"
-                    if [ -f "$unit" ]; then
-                        mkdir -p "$wants"
-                        ln -sf /lib/systemd/system/ssh.service "$wants/ssh.service"
-                        echo "[eglrdsk] ssh.service enable symlink written"
-                    else
-                        echo "[eglrdsk] WARNING: $unit not found — sshd not enabled; check openssh-server install."
-                    fi
-                |||,
-                // --- Per-device SSH host keys (first-boot regeneration) ---
-                // The build bakes host keys into the rootfs, so every flashed card would
-                // otherwise share one SSH identity — a security hole and "host key
-                // changed" warnings for anyone flashing more than one board. Fix: delete
-                // the baked keys here, and install a guarded oneshot that runs
-                // `ssh-keygen -A` on the first boot only (ConditionPathExists), ordered
-                // Before=ssh.service so keys exist before sshd starts. Self-contained —
-                // no rsetup/dpkg-reconfigure dependency. printf (not a heredoc) keeps the
-                // unit body clear of jsonnet `|||` indentation pitfalls.
-                //
-                // $1 = mounted rootfs.
-                |||
-                    set -e
-                    echo "[eglrdsk] removing baked SSH host keys; regenerate on first boot"
-                    rm -f "$1"/etc/ssh/ssh_host_*
-                    unit="$1/etc/systemd/system/regenerate-ssh-host-keys.service"
-                    printf '%s\n' \
-                        '[Unit]' \
-                        'Description=Regenerate SSH host keys on first boot' \
-                        'ConditionPathExists=!/etc/ssh/ssh_host_rsa_key' \
-                        'Before=ssh.service' \
-                        '[Service]' \
-                        'Type=oneshot' \
-                        'ExecStart=/usr/bin/ssh-keygen -A' \
-                        '[Install]' \
-                        'WantedBy=multi-user.target' \
-                        > "$unit"
-                    wants="$1/etc/systemd/system/multi-user.target.wants"
-                    mkdir -p "$wants"
-                    ln -sf /etc/systemd/system/regenerate-ssh-host-keys.service \
-                        "$wants/regenerate-ssh-host-keys.service"
-                    echo "[eglrdsk] regenerate-ssh-host-keys.service installed + enabled"
-                |||,
+                // NOTE: no SSH hooks here on purpose. Radxa's rsetup first-boot
+                // (/config/before.txt) already disables ssh, runs `regenerate_ssh_hostkey`
+                // (unique per-device host keys), and does `if headless enable_service ssh`.
+                // GlyphDeck units have a display (touchscreen) so they're never "headless";
+                // SSH there is an admin toggle exposed via a GDC command (off by default).
+                // Our old ssh-enable + host-key-regen hooks just fought/duplicated that, so
+                // they were removed (2026-06-30). See radxa-zero3-cli memory
+                // ssh-first-boot-and-gdc-toggle + Documentation.
+
                 // --- Boot fix: U-Boot serial-menu hang ---
                 // Radxa's discontinued CLI image hung at boot (last line "Starting
                 // kernel..."): U-Boot forced an interactive extlinux menu selection over
