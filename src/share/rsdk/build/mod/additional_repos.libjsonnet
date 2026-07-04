@@ -30,7 +30,15 @@ function(suite, radxa_mirror, radxa_repo_suffix, product, temp_dir, install_vsco
 
     // 80-radxa-* sources: SoC-specific or family repositories for each SoC; only write deb entries, independent of pkgs.json
     local radxa_80_sources = std.flattenArrays([
-        if soc_specific_repo(soc)
+        // a733 has no `a733-trixie` channel yet (404) — Radxa is mid-migration; the 5.15 BSP
+        // debs (kernel/U-Boot/overlays) live only in `a733-bullseye` and are supplied locally
+        // via `rsdk build ... --debs <dir>` (local-apt-repository, pin 1999). Emitting the
+        // 80-radxa-a733 source for trixie would 404 and abort the essential-hook
+        // `apt-get update`, so skip it; the family `trixie` repo (70-radxa) + the local repo
+        // cover the board packages. See radxa-a733-cli/Documentation/trixie-cli-feasibility.md.
+        if soc == "a733" && suite == "trixie"
+        then []
+        else if soc_specific_repo(soc)
         then [
             |||
                 echo deb %(radxa_url)s%(product_soc)s-%(suite)s %(product_soc)s-%(suite)s main > "$1/etc/apt/sources.list.d/80-radxa-%(product_soc)s.list"
@@ -65,7 +73,12 @@ function(suite, radxa_mirror, radxa_repo_suffix, product, temp_dir, install_vsco
     // Radxa pkgs.json downloads and snapshot; grouped in a single hooks list controlled by use_pkgs_json
     local radxa_pkgs_json_hooks = if use_pkgs_json then
         std.flattenArrays([
-            if soc_specific_repo(soc)
+            // a733 has no `a733-trixie` channel yet (404) — same reason as radxa_80_sources
+            // above: skip the SoC pkgs.json fetch for a733/trixie so the wget doesn't 404 and
+            // abort the build. The family `trixie` pkgs.json (70-radxa) still covers it.
+            if soc == "a733" && suite == "trixie"
+            then []
+            else if soc_specific_repo(soc)
             then [
                 |||
                     wget -O "$1/etc/rsdk/80-radxa-%(product_soc)s.pkgs.json" %(radxa_url)s%(product_soc)s-%(suite)s/pkgs.json
