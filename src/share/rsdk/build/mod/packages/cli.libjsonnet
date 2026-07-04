@@ -4,10 +4,13 @@ local product_soc_array = import "../../../configs/product_soc_array.libjsonnet"
 // EvilGeniusLabs cli edition (eglrdsk fork).
 //
 // Stock rsdk `cli` == base_packages: the lean headless userland layered over `core`.
-// We keep that base set and add board-scoped tuning for rk3566 (Radxa Zero 3 / 3W / 3E)
-// here, guarded by SoC so the delta never leaks into other products or the `kde` edition
-// (which also pulls `base`). Rationale + the kde-vs-cli map live in radxa-zero3-cli's
-// Documentation/rsdk-build-notes.md.
+// We keep that base set and add board-scoped tuning here, guarded by SoC so the delta never
+// leaks into other products or the `kde` edition (which also pulls `base`):
+//   - rk3566  — Radxa Zero 3 / 3W / 3E. Rationale + kde-vs-cli map: radxa-zero3-cli's
+//               Documentation/rsdk-build-notes.md.
+//   - a733    — Radxa Cubie A7A/A7S/A7Z (Allwinner). Mixed-suite Trixie build over a bullseye
+//               BSP; evidence + build plan: radxa-a733-cli's
+//               Documentation/trixie-cli-feasibility.md.
 
 function(suite,
          product,
@@ -84,6 +87,86 @@ function(suite,
                     set -e
                     conf="$1/usr/share/u-boot-menu/conf.d/radxa.conf"
                     echo "[eglrdsk] rk3566 cli boot fix: disabling interactive U-Boot menu"
+                    if [ -f "$conf" ]; then
+                        echo "[eglrdsk] radxa.conf BEFORE:"; cat "$conf"
+                        for var in U_BOOT_PROMPT U_BOOT_TIMEOUT; do
+                            if grep -qE "^[[:space:]]*#?[[:space:]]*${var}=" "$conf"; then
+                                sed -i -E "s|^[[:space:]]*#?[[:space:]]*${var}=.*|${var}=\"0\"|" "$conf"
+                            else
+                                echo "${var}=\"0\"" >> "$conf"
+                            fi
+                        done
+                        echo "[eglrdsk] radxa.conf AFTER:"; cat "$conf"
+                    else
+                        echo "[eglrdsk] WARNING: $conf not found — boot fix not applied; check the BSP boot package."
+                    fi
+                |||,
+            ],
+        },
+    }
+    else if std.contains(product_soc_array(product), "a733")
+    then {
+        mmdebstrap+: {
+            // --- Allwinner A733 (Cubie A7A/A7S/A7Z) headless tuning ---
+            // Mixed-suite build: Radxa's A733 BSP (5.15 kernel / U-Boot / DT overlays) is
+            // published only for bullseye, so those three arrive via
+            // `rsdk build radxa-a733 trixie cli --debs <dir>` (local-apt-repository, pin
+            // 1999); the userland board packages below are native Trixie. The dependency
+            // closure resolves and the DKMS modules compile against the 5.15 headers under
+            // Trixie gcc-14 — both verified 2026-07-04. Full evidence + open items:
+            // radxa-a733-cli/Documentation/trixie-cli-feasibility.md.
+
+            // --- HARD REQUIREMENT: Wi-Fi + Bluetooth (AICSemi AIC8800D80, USB-attached) ---
+            // Unlike the Zero 3 (SDIO Wi-Fi + UART BT on ttyS1), the A733 radio sits on USB:
+            // both Wi-Fi (aic8800_fdrv) and BT (aic_btusb) enumerate over USB, so there is NO
+            // hciattach/ttyS1 unit — hci0 comes up directly. Driver is the out-of-tree
+            // aic8800-usb-dkms, built at image time against the 5.15 headers (compile
+            // verified). The driver does not register through nl80211, so on a headless box
+            // Wi-Fi is managed with NetworkManager/nmcli, not iw/wpa_supplicant (userland
+            // net mgmt comes from core/base). These normally arrive via task-radxa-a733 +
+            // --install-recommends (a733 has recommends-on for trixie), but we pin them so
+            // the kde->cli delta can never silently drop wireless.
+            //
+            // NOTE: the aic8800 DKMS build needs a compiler, and gcc reaches the image ONLY
+            // via dkms's Recommends — do NOT build this edition with --no-install-recommends
+            // or the module build has no compiler. (Verified via closure sim, 2026-07-04.)
+            packages+: [
+                "aic8800-firmware",                     // Wi-Fi + BT firmware blobs
+                "aic8800-usb-dkms",                     // out-of-tree USB driver: aic8800_fdrv + aic_btusb
+                "radxa-system-config-aic8800-usb-dkms", // system config for the USB radio variant
+                "bluez",                                // BT userspace (bluetoothd/bluetoothctl)
+
+                // --- USB-C OTG ---
+                // On the A733, OTG is a userland package (radxa-otgutils), not a DT overlay.
+                "radxa-otgutils",
+
+                // --- Device-tree overlays ---
+                // Optional-peripheral toggles, shipped disabled, applied via rsetup. The DKMS
+                // package compiles .dtbo via dtc against the 5.15 headers (verified). The base
+                // DTB (inside the kernel deb) boots the board headless with no overlay applied.
+                "radxa-overlays-dkms",
+
+                // --- Timezone database ---
+                // Stock base ships only UTC zone data; add tzdata so `timedatectl
+                // set-timezone <Zone>` works. Default stays UTC — neutral for a public image.
+                "tzdata",
+            ],
+
+            "customize-hooks"+: [
+                // --- Boot fix candidate: U-Boot serial-menu hang (UNVERIFIED on a733) ---
+                // The Zero 3 CLI image hung at boot on an interactive extlinux menu forced
+                // over the serial console (headless board waited at the prompt forever).
+                // Whether the A733 U-Boot exhibits the same hang is NOT yet confirmed — needs
+                // UART on the board (trixie-cli-feasibility.md open item). Making the menu
+                // non-interactive is harmless if the hang never occurs, so we ship the same
+                // fix + verify-on-first-build logging as rk3566. The `u-boot-update` that
+                // rootfs.jsonnet runs after this hook (and any later `apt upgrade`)
+                // regenerates a non-blocking extlinux.conf from the patched source conf.
+                // A733 serial console is ttyAS0 (Allwinner UART), not ttyS*. $1 = mounted rootfs.
+                |||
+                    set -e
+                    conf="$1/usr/share/u-boot-menu/conf.d/radxa.conf"
+                    echo "[eglrdsk] a733 cli boot fix: disabling interactive U-Boot menu"
                     if [ -f "$conf" ]; then
                         echo "[eglrdsk] radxa.conf BEFORE:"; cat "$conf"
                         for var in U_BOOT_PROMPT U_BOOT_TIMEOUT; do
