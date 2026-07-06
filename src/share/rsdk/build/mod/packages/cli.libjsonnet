@@ -150,6 +150,17 @@ function(suite,
                 // Stock base ships only UTC zone data; add tzdata so `timedatectl
                 // set-timezone <Zone>` works. Default stays UTC — neutral for a public image.
                 "tzdata",
+
+                // --- DP-alt display: light a console on the USB-C DisplayPort-alt link ---
+                // The sun60i-a733 DP-alt link does not scan out from the first modeset after
+                // boot and HPD is unwired, so a headless image comes up dark on that output.
+                // dp-alt-toggle is a libdrm KMS mode-CHANGE helper (force-detect + A->B->A
+                // toggle + retry) that arms the link, run once at boot via its systemd oneshot
+                // and re-armed on DRM hotplug via its udev rule. Supplied as a local .deb via
+                // `--debs` (built by radxa-a733-cli/scripts/build-dp-alt-toggle-deb.sh); apt
+                // pulls its libdrm2 dependency. Console-only path — the X11 edition uses the
+                // xrandr toggle instead (X holds DRM master, so this KMS path EBUSYs there).
+                "dp-alt-toggle",
             ],
 
             "customize-hooks"+: [
